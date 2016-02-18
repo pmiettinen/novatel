@@ -36,20 +36,37 @@
  *
  */
 
+/*
+* Copyright (C) 2016 Swift Navigation Inc.
+* Contact: Pasi Miettinen <pasi.miettinen@exafore.com>
+*
+* This source is subject to the license found in the file 'LICENSE'
+* which must be be distributed together with this source. All other
+* rights reserved.
+*
+* THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
+* KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR
+* PURPOSE.
+*/
+
 #ifndef NOVATEL_H
 #define NOVATEL_H
 
 #include <string>
 #include <cstring> // for size_t
 
+#include <fstream>
+
 // Structure definition headers
 #include "novatel/novatel_enums.h"
 #include "novatel/novatel_structures.h"
+
 // Boost Headers
 #include <boost/function.hpp>
 #include <boost/thread.hpp>
 #include <boost/bind.hpp>
-//#include <boost/condition_variable.hpp>
+
 // Serial Headers
 #include "serial/serial.h"
 
@@ -105,6 +122,8 @@ typedef boost::function<void(ReceiverHardwareStatus&, double&)> ReceiverHardware
 typedef boost::function<void(Position&, double&)> BestPositionCallback;
 typedef boost::function<void(Position&, double&)> BestPseudorangePositionCallback;
 typedef boost::function<void(Position&, double&)> RtkPositionCallback;
+typedef boost::function<void(RawGpsWord&, double&)> RawGpsWordCallback;
+typedef boost::function<void(BestSats&, double&)> BestSatsCallback;
 
 
 class Novatel
@@ -161,6 +180,8 @@ public:
      void set_time_handler(GetTimeCallback time_handler) {
          this->time_handler_ = time_handler;
      }
+
+    bool CreateRawLog(std::string &name);
 
     void setLogDebugCallback(LogMsgCallback debug_callback){log_debug_=debug_callback;};
     void setLogInfoCallback(LogMsgCallback info_callback){log_info_=info_callback;};
@@ -333,6 +354,10 @@ public:
         best_pseudorange_position_callback_=handler;};
     void set_rtk_position_callback(RtkPositionCallback handler){
         rtk_position_callback_=handler;};
+    void set_raw_gps_word_callback(RawGpsWordCallback handler){
+        raw_gps_word_callback_=handler;};
+    void set_best_sats_callback(BestSatsCallback handler){
+        best_sats_callback_=handler;};
 
     void set_raw_msg_callback(RawMsgCallback handler) {
         raw_msg_callback_=handler;};
@@ -387,115 +412,117 @@ private:
 	    const CompressedRangeData &cmp,
 	    const double              &uncmpPsr) const;
 
-    bool SendBinaryDataToReceiver(uint8_t* msg_ptr, size_t length);
+  bool SendBinaryDataToReceiver(uint8_t* msg_ptr, size_t length);
 
-    unsigned long CRC32Value(int i);
-    unsigned long CalculateBlockCRC32 ( unsigned long ulCount, /* Number of bytes in the data block */
-                                        unsigned char *ucBuffer ); /* Data block */
+  unsigned long CRC32Value(int i);
+  unsigned long CalculateBlockCRC32 ( unsigned long ulCount, /* Number of bytes in the data block */
+                                      unsigned char *ucBuffer ); /* Data block */
 
-    //////////////////////////////////////////////////////
-    // Serial port reading members
-    //////////////////////////////////////////////////////
-	//! Serial port object for communicating with sensor
-	serial::Serial *serial_port_;
-	//! shared pointer to Boost thread for listening for data from novatel
-	boost::shared_ptr<boost::thread> read_thread_ptr_;
-	bool reading_status_;  //!< True if the read thread is running, false otherwise.
+  //////////////////////////////////////////////////////
+  // Serial port reading members
+  //////////////////////////////////////////////////////
+  //! Serial port object for communicating with sensor
+  serial::Serial *serial_port_;
+  //! shared pointer to Boost thread for listening for data from novatel
+  boost::shared_ptr<boost::thread> read_thread_ptr_;
+  bool reading_status_;  //!< True if the read thread is running, false otherwise.
 
-    //////////////////////////////////////////////////////
-    // Diagnostic Callbacks
-    //////////////////////////////////////////////////////
-    HandleAcknowledgementCallback handle_acknowledgement_;
-    LogMsgCallback log_debug_;
-    LogMsgCallback log_info_;
-    LogMsgCallback log_warning_;
-    LogMsgCallback log_error_;
+  //////////////////////////////////////////////////////
+  // Diagnostic Callbacks
+  //////////////////////////////////////////////////////
+  HandleAcknowledgementCallback handle_acknowledgement_;
+  LogMsgCallback log_debug_;
+  LogMsgCallback log_info_;
+  LogMsgCallback log_warning_;
+  LogMsgCallback log_error_;
 
-    GetTimeCallback time_handler_; //!< Function pointer to callback function for timestamping
-
-
-    //////////////////////////////////////////////////////
-    // New Data Callbacks
-    //////////////////////////////////////////////////////
-    RawMsgCallback raw_msg_callback_;
-
-    BestGpsPositionCallback best_gps_position_callback_;
-    BestLeverArmCallback best_lever_arm_callback_;
-    BestPositionCallback best_position_callback_;
-    BestUtmPositionCallback best_utm_position_callback_;
-    BestVelocityCallback best_velocity_callback_;
-    BestPositionEcefCallback best_position_ecef_callback_;
-    InsPositionVelocityAttitudeCallback ins_position_velocity_attitude_callback_;
-    InsPositionVelocityAttitudeShortCallback ins_position_velocity_attitude_short_callback_;
-    VehicleBodyRotationCallback vehicle_body_rotation_callback_;
-    InsSpeedCallback ins_speed_callback_;
-    RawImuCallback raw_imu_callback_;
-    RawImuShortCallback raw_imu_short_callback_;
-    InsCovarianceCallback ins_covariance_callback_;
-    InsCovarianceShortCallback ins_covariance_short_callback_;
-
-    // GPS Callbacks
-    PseudorangeDopCallback pseudorange_dop_callback_;
-    RtkDopCallback rtk_dop_callback_;
-    BaselineEcefCallback baseline_ecef_callback_;
-    IonosphericModelCallback ionospheric_model_callback_;
-    RangeMeasurementsCallback range_measurements_callback_;
-    CompressedRangeMeasurementsCallback compressed_range_measurements_callback_;
-    GpsEphemerisCallback gps_ephemeris_callback_;
-    RawEphemerisCallback raw_ephemeris_callback_;
-    AlmanacCallback almanac_callback_;
-    RawAlmanacCallback raw_almanac_callback_;
-    SatellitePositionsCallback satellite_positions_callback_;
-    SatelliteVisibilityCallback satellite_visibility_callback_;
-    TimeOffsetCallback time_offset_callback_;
-    TrackingStatusCallback tracking_status_callback_;
-    ReceiverHardwareStatusCallback receiver_hardware_status_callback_;
-    BestPseudorangePositionCallback best_pseudorange_position_callback_;
-    RtkPositionCallback rtk_position_callback_;
+  GetTimeCallback time_handler_; //!< Function pointer to callback function for timestamping
 
 
+  //////////////////////////////////////////////////////
+  // New Data Callbacks
+  //////////////////////////////////////////////////////
+  RawMsgCallback raw_msg_callback_;
 
-	//////////////////////////////////////////////////////
-	// Incoming data buffers
-	//////////////////////////////////////////////////////
-	unsigned char data_buffer_[MAX_NOUT_SIZE];	//!< data currently being buffered to read
-	unsigned char* data_read_;		//!< used only in BufferIncomingData - declared here for speed
-	size_t bytes_remaining_;	//!< bytes remaining to be read in the current message
-	size_t buffer_index_;		//!< index into data_buffer_
-	size_t header_length_;	//!< length of the current header being read
-	bool reading_acknowledgement_;	//!< true if an acknowledgement is being received
+  BestGpsPositionCallback best_gps_position_callback_;
+  BestLeverArmCallback best_lever_arm_callback_;
+  BestPositionCallback best_position_callback_;
+  BestUtmPositionCallback best_utm_position_callback_;
+  BestVelocityCallback best_velocity_callback_;
+  BestPositionEcefCallback best_position_ecef_callback_;
+  InsPositionVelocityAttitudeCallback ins_position_velocity_attitude_callback_;
+  InsPositionVelocityAttitudeShortCallback ins_position_velocity_attitude_short_callback_;
+  VehicleBodyRotationCallback vehicle_body_rotation_callback_;
+  InsSpeedCallback ins_speed_callback_;
+  RawImuCallback raw_imu_callback_;
+  RawImuShortCallback raw_imu_short_callback_;
+  InsCovarianceCallback ins_covariance_callback_;
+  InsCovarianceShortCallback ins_covariance_short_callback_;
+
+  // GPS Callbacks
+  PseudorangeDopCallback pseudorange_dop_callback_;
+  RtkDopCallback rtk_dop_callback_;
+  BaselineEcefCallback baseline_ecef_callback_;
+  IonosphericModelCallback ionospheric_model_callback_;
+  RangeMeasurementsCallback range_measurements_callback_;
+  CompressedRangeMeasurementsCallback compressed_range_measurements_callback_;
+  GpsEphemerisCallback gps_ephemeris_callback_;
+  RawEphemerisCallback raw_ephemeris_callback_;
+  AlmanacCallback almanac_callback_;
+  RawAlmanacCallback raw_almanac_callback_;
+  SatellitePositionsCallback satellite_positions_callback_;
+  SatelliteVisibilityCallback satellite_visibility_callback_;
+  TimeOffsetCallback time_offset_callback_;
+  TrackingStatusCallback tracking_status_callback_;
+  ReceiverHardwareStatusCallback receiver_hardware_status_callback_;
+  BestPseudorangePositionCallback best_pseudorange_position_callback_;
+  RtkPositionCallback rtk_position_callback_;
+  RawGpsWordCallback raw_gps_word_callback_;
+  BestSatsCallback best_sats_callback_;
+
+
+
+  //////////////////////////////////////////////////////
+  // Incoming data buffers
+  //////////////////////////////////////////////////////
+  unsigned char data_buffer_[MAX_NOUT_SIZE*100];	//!< data currently being buffered to read
+  unsigned char* data_read_;		//!< used only in BufferIncomingData - declared here for speed
+  size_t bytes_remaining_;	//!< bytes remaining to be read in the current message
+  size_t buffer_index_;		//!< index into data_buffer_
+  size_t header_length_;	//!< length of the current header being read
+  bool reading_acknowledgement_;	//!< true if an acknowledgement is being received
     bool reading_reset_complete_;   //!< true if an {COM#} message confirming receiver reset if complete
-	double read_timestamp_; 		//!< time stamp when last serial port read completed
-	double parse_timestamp_;		//!< time stamp when last parse began
-	BINARY_LOG_TYPE message_id_;	//!< message id of message currently being buffered
+  double read_timestamp_; 		//!< time stamp when last serial port read completed
+  double parse_timestamp_;		//!< time stamp when last parse began
+  BINARY_LOG_TYPE message_id_;	//!< message id of message currently being buffered
 
-    //////////////////////////////////////////////////////
-    // Mutex's
-    //////////////////////////////////////////////////////
-    boost::condition_variable ack_condition_;
-    boost::mutex ack_mutex_;
-    bool ack_received_;     //!< true if an acknowledgement has been received from the GPS
-    boost::condition_variable reset_condition_;
-    boost::mutex reset_mutex_;
-    bool waiting_for_reset_complete_;     //!< true if GPS has finished resetting and is ready for input
+  //////////////////////////////////////////////////////
+  // Mutex's
+  //////////////////////////////////////////////////////
+  boost::condition_variable ack_condition_;
+  boost::mutex ack_mutex_;
+  bool ack_received_;     //!< true if an acknowledgement has been received from the GPS
+  boost::condition_variable reset_condition_;
+  boost::mutex reset_mutex_;
+  bool waiting_for_reset_complete_;     //!< true if GPS has finished resetting and is ready for input
 
-    bool is_connected_; //!< indicates if a connection to the receiver has been established
-	//////////////////////////////////////////////////////
+  bool is_connected_; //!< indicates if a connection to the receiver has been established
+  //////////////////////////////////////////////////////
     // Receiver information and capabilities
-	//////////////////////////////////////////////////////
-	std::string protocol_version_;		//!< Receiver version, OEM4, OEMV, OEM6, or UNKNOWN
-	std::string serial_number_; //!< Receiver serial number
-	std::string hardware_version_; //!< Receiver hardware version
-	std::string software_version_; //!< Receiver software version
-	std::string model_;				//!< Receiver model number
+  //////////////////////////////////////////////////////
+  std::string protocol_version_;		//!< Receiver version, OEM4, OEMV, OEM6, or UNKNOWN
+  std::string serial_number_; //!< Receiver serial number
+  std::string hardware_version_; //!< Receiver hardware version
+  std::string software_version_; //!< Receiver software version
+  std::string model_;				//!< Receiver model number
 
-	bool l2_capable_; //!< Can the receiver handle L1 and L2 or just L1?
-	bool raw_capable_; //!< Can the receiver output raw measurements?
-	bool rtk_capable_; //!< Can the receiver compute RT2 and/or RT20 positions?
-	bool glonass_capable_; //!< Can the receiver receive GLONASS frequencies?
-	bool span_capable_;  //!< Is the receiver a SPAN unit?
+  bool l2_capable_; //!< Can the receiver handle L1 and L2 or just L1?
+  bool raw_capable_; //!< Can the receiver output raw measurements?
+  bool rtk_capable_; //!< Can the receiver compute RT2 and/or RT20 positions?
+  bool glonass_capable_; //!< Can the receiver receive GLONASS frequencies?
+  bool span_capable_;  //!< Is the receiver a SPAN unit?
 
-
+  std::ofstream raw_log;
 };
 }
 #endif

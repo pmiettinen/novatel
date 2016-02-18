@@ -34,12 +34,25 @@
  *
  */
 
+/*
+* Copyright (C) 2016 Swift Navigation Inc.
+* Contact: Pasi Miettinen <pasi.miettinen@exafore.com>
+*
+* This source is subject to the license found in the file 'LICENSE'
+* which must be be distributed together with this source. All other
+* rights reserved.
+*
+* THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
+* KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR
+* PURPOSE.
+*/
+
 
 #ifndef NOVATELSTRUCTURES_H
 #define NOVATELSTRUCTURES_H
 
 #include "novatel_enums.h"
-#include <stdint.h>  // use fixed size integer types, rather than standard c++ types
 #include <stdint.h>  // use fixed size integer types, rather than standard c++ types
 
 namespace novatel {
@@ -47,8 +60,9 @@ namespace novatel {
 #define MAX_NOUT_SIZE 8192 // Maximum size of a NovAtel log buffer (ALMANACA logs are big!)
 #define EPH_CHAN 33
 #define NUMSAT 14
-#define MAX_CHAN	54  // Maximum number of signal channels
+#define MAX_CHAN 256  // Maximum number of signal channels
 #define MAX_NUM_SAT 28	// Maximum number of satellites with information in the RTKDATA log
+#define MAX_NUM_SAT_GPS 32
 #define HEADER_SIZE 28 // Binary header size for OEM 4, V, and 6 receivers
 #define SHORT_HEADER_SIZE 12 // short binary header size
 #define CHECKSUM_SIZE 4  // size of the message CRC
@@ -530,7 +544,7 @@ struct Dop {
     float elevation_cutoff_angle;       //!< Elevation cutoff angle
     int32_t number_of_prns;             //!< Number of PRNs to follow
     uint32_t prn[MAX_CHAN];                   //!< PRNof each satellite used
-    uint8_t 	crc[4];                 //!< 32-bit cyclic redundancy check (CRC)
+    uint8_t crc[4];                 //!< 32-bit cyclic redundancy check (CRC)
 });
 
 //*******************************************************************************
@@ -861,7 +875,7 @@ PACK(
 struct Almanac {
 	Oem4BinaryHeader header;
 	int32_t number_of_prns;
-	AlmanacData data[MAX_NUM_SAT];
+	AlmanacData data[MAX_NUM_SAT_GPS];
 	uint8_t crc[4];
 
 });
@@ -1297,6 +1311,39 @@ struct ReceiverHardwareStatus
     float reserved2;            //!< Reserved
     float lna_card_voltage;     //!< LNA voltage (V) at GPSCard output
     int8_t crc[4];              //!< 32-bit crc
+};
+
+/*!
+ * RAWGPSWORD Message Structure
+ */
+struct RawGpsWord
+{
+	Oem4BinaryHeader header;
+  uint32_t prn;	              //!< Satellite PRN number
+  uint8_t nav_word[4];		    //!< Raw navigation word
+  uint8_t crc[4];             //!< 32-bit crc
+};
+
+/*!
+ * BESTSATS entry Structure
+ */
+struct BestSatEntry
+{
+  uint32_t system;
+  uint32_t satellite_id;
+  uint32_t status;
+  uint32_t signal_mask;
+};
+
+/*!
+ * BESTSATS Message Structure
+ */
+struct BestSats
+{
+	Oem4BinaryHeader header;
+  uint32_t entries;	                        //!< Number of records to follow
+  BestSatEntry sats[MAX_NUM_SAT_GPS];	      //!< Entries
+  uint8_t crc[4];                           //!< 32-bit crc
 };
 
 }

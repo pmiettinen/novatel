@@ -1,3 +1,17 @@
+/*
+* Copyright (C) 2016 Swift Navigation Inc.
+* Contact: Pasi Miettinen <pasi.miettinen@exafore.com>
+*
+* This source is subject to the license found in the file 'LICENSE'
+* which must be be distributed together with this source. All other
+* rights reserved.
+*
+* THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY
+* KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+* IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR
+* PURPOSE.
+*/
+
 #include "novatel/novatel.h"
 
 #include <cmath>
@@ -15,7 +29,10 @@ using namespace novatel;
 #define WIN32_LEAN_AND_MEAN
 #include "boost/date_time/posix_time/posix_time.hpp"
 ////////////////////////////////////////////////////
+#define LOG_HEADER_LEN(log) (uint16_t) *(log+3)
 
+#define LOG_PAYLOAD_LEN(log) ((((uint16_t) *(log+9)) << 8) +\
+                               ((uint16_t) *(log+8)))
 
 /* --------------------------------------------------------------------------
 Calculate a CRC value to be used by CRC calculation functions.
@@ -71,7 +88,7 @@ inline void SaveMessageToFile(unsigned char *message, size_t length, const char 
     ofstream outfile;
     outfile.open(filename, ios::out | ios::app); // "./test_data/filename.txt"
     if(outfile.is_open()) {
-        for (int index =0; index < length; index++) {
+        for (unsigned int index =0; index < length; index++) {
             outfile << message[index];
         }
     }
@@ -142,27 +159,30 @@ inline void DefaultRawEphemCallback(RawEphemeris ephemeris, double time_stamp) {
 }
 
 Novatel::Novatel() {
-	serial_port_=NULL;
-	reading_status_=false;
-    time_handler_ = DefaultGetTime;
-    handle_acknowledgement_=DefaultAcknowledgementHandler;
-    best_position_callback_=DefaultBestPositionCallback;
-    raw_ephemeris_callback_=DefaultRawEphemCallback;
-    log_debug_=DefaultDebugMsgCallback;
-    log_info_=DefaultInfoMsgCallback;
-    log_warning_=DefaultWarningMsgCallback;
-    log_error_=DefaultErrorMsgCallback;
-	reading_acknowledgement_=false;
-    buffer_index_=0;
-    read_timestamp_=0;
-    parse_timestamp_=0;
-    ack_received_=false;
-    waiting_for_reset_complete_=false;
-    is_connected_ = false;
+  serial_port_=NULL;
+  reading_status_=false;
+  time_handler_ = DefaultGetTime;
+  handle_acknowledgement_=DefaultAcknowledgementHandler;
+  best_position_callback_=DefaultBestPositionCallback;
+  raw_ephemeris_callback_=DefaultRawEphemCallback;
+  log_debug_=DefaultDebugMsgCallback;
+  log_info_=DefaultInfoMsgCallback;
+  log_warning_=DefaultWarningMsgCallback;
+  log_error_=DefaultErrorMsgCallback;
+  reading_acknowledgement_=false;
+  buffer_index_=0;
+  read_timestamp_=0;
+  parse_timestamp_=0;
+  ack_received_=false;
+  waiting_for_reset_complete_=false;
+  is_connected_ = false;
 }
 
 Novatel::~Novatel() {
-    Disconnect();
+  Disconnect();
+
+  if (raw_log.is_open())
+    raw_log.close();
 }
 
 bool Novatel::Connect(std::string port, int baudrate, bool search) {
@@ -220,12 +240,11 @@ bool Novatel::Connect(std::string port, int baudrate, bool search) {
 }
 
 bool Novatel::Connect_(std::string port, int baudrate=115200) {
-	try {
+  try {
+    serial::Timeout my_timeout(50, 200, 0, 200, 0); // 115200 working settings
+    serial_port_ = new serial::Serial(port,baudrate,my_timeout);
 
-		//serial::Timeout my_timeout(50, 200, 0, 200, 0); // 115200 working settings
-		//serial_port_ = new serial::Serial(port,baudrate,my_timeout);
-
-		serial_port_ = new serial::Serial(port,baudrate,serial::Timeout::simpleTimeout(50));
+    //serial_port_ = new serial::Serial(port,baudrate,serial::Timeout::simpleTimeout(50));
 
 		if (!serial_port_->isOpen()){
 	        std::stringstream output;
@@ -336,7 +355,19 @@ bool Novatel::Ping(int num_attempts) {
 
 	// no response found
 	return false;
+}
 
+bool Novatel::CreateRawLog(std::string &name) {
+  try {
+    if (raw_log.is_open())
+      raw_log.close();
+  } catch (exception &e) {
+    return false;
+  }
+
+  raw_log.open(name, std::ios::binary);
+  
+  return true;
 }
 
 void Novatel::SendRawEphemeridesToReceiver(RawEphemerides raw_ephemerides) {
@@ -396,7 +427,7 @@ bool Novatel::SendCommand(std::string cmd_msg, bool wait_for_ack) {
 		// wait for acknowledgement (or 2 seconds)
         if(wait_for_ack) {
             boost::mutex::scoped_lock lock(ack_mutex_);
-            boost::system_time const timeout=boost::get_system_time()+ boost::posix_time::milliseconds(2000);
+            boost::system_time const timeout=boost::get_system_time()+ boost::posix_time::milliseconds(500);
             if (ack_condition_.timed_wait(lock,timeout)) {
                 log_info_("Command `" + cmd_msg + "` sent to GPS receiver.");
                 return true;
@@ -433,7 +464,9 @@ void Novatel::PDPFilterDisable() {
     try{
     std::stringstream pdp_cmd;
     pdp_cmd << "PDPFILTER DISABLE" ;
-    bool result = SendCommand(pdp_cmd.str());
+    if (!SendCommand(pdp_cmd.str())) {
+      log_error_("SendCommand failed");
+    }
     } catch (std::exception &e) {
         std::stringstream output;
         output << "Error in Novatel::PDPFilterDisable(): " << e.what();
@@ -444,8 +477,10 @@ void Novatel::PDPFilterDisable() {
 void Novatel::PDPFilterEnable() {
     try{
     std::stringstream pdp_cmd;
-    pdp_cmd << "PDPFILTER ENABLE" ;
-    bool result = SendCommand(pdp_cmd.str());
+    pdp_cmd << "PDPFILTER ENABLE";
+    if (!SendCommand(pdp_cmd.str())) {
+      log_error_("PDPFILTER ENABLE failed");
+    }    
     } catch (std::exception &e) {
         std::stringstream output;
         output << "Error in Novatel::PDPFilterEnable(): " << e.what();
@@ -457,7 +492,9 @@ void Novatel::PDPFilterReset() {
     try{
     std::stringstream pdp_cmd;
     pdp_cmd << "PDPFILTER RESET";
-    bool result = SendCommand(pdp_cmd.str());
+    if (!SendCommand(pdp_cmd.str())) {
+      log_error_("PDPFILTER RESET failed");
+    }    
     } catch (std::exception &e) {
         std::stringstream output;
         output << "Error in Novatel::PDPFilterReset(): " << e.what();
@@ -490,7 +527,9 @@ void Novatel::PDPModeConfigure(PDPMode mode, PDPDynamics dynamics) {
             return;
         }
 
-        bool result = SendCommand(pdp_cmd.str());
+        if (!SendCommand(pdp_cmd.str())) {
+          log_error_("PDPModeConfigure SendCommand failed");
+        }
     } catch (std::exception &e) {
         std::stringstream output;
         output << "Error in Novatel::PDPModeConfigure(): " << e.what();
@@ -503,7 +542,9 @@ void Novatel::SetPositionTimeout(uint32_t seconds){
         if(seconds<=86400) {
             std::stringstream pdp_cmd;
             pdp_cmd << "POSTIMEOUT " << seconds;
-            bool result = SendCommand(pdp_cmd.str());
+            if (!SendCommand(pdp_cmd.str())) {
+              log_error_("POSTIMEOUT SendCommand failed");
+            }
         } else
             log_error_("Seconds is not a valid value!");
     } catch (std::exception &e) {
@@ -582,6 +623,7 @@ bool Novatel::InjectAlmanac(Almanac almanac) {
         log_error_(output.str());
         return false;
     }
+    return false;
 }
 
 bool Novatel::SetCarrierSmoothing(uint32_t l1_time_constant, uint32_t l2_time_constant) {
@@ -759,7 +801,7 @@ void Novatel::ConfigureLogs(std::string log_string) {
 				log_info_(cmd.str());
 				// wait for acknowledgement (or 2 seconds)
 				boost::mutex::scoped_lock lock(ack_mutex_);
-				boost::system_time const timeout=boost::get_system_time()+ boost::posix_time::milliseconds(2000);
+				boost::system_time const timeout=boost::get_system_time()+ boost::posix_time::milliseconds(5000);
 				if (ack_condition_.timed_wait(lock,timeout)) {
 					log_info_("Ack received for requested log: " + *it);
 					break;
@@ -782,7 +824,9 @@ void Novatel::Unlog(std::string log) {
     try {
         std::stringstream unlog_cmd;
         unlog_cmd << "UNLOG " << log;
-        bool result = SendCommand(unlog_cmd.str());
+        if (!SendCommand(unlog_cmd.str())) {
+          log_error_("UNLOG SendCommand failed");
+        }
     } catch (std::exception &e) {
         std::stringstream output;
         output << "Error in Novatel::Unlog(): " << e.what();
@@ -792,7 +836,9 @@ void Novatel::Unlog(std::string log) {
 
 void Novatel::UnlogAll() {
     try {
-        bool result = SendCommand("UNLOGALL THISPORT");
+        if (!SendCommand("UNLOGALL THISPORT")) {
+          log_error_("UNLOGALL SendCommand failed");
+        }
     } catch (std::exception &e) {
         std::stringstream output;
         output << "Error in Novatel::UnlogAll(): " << e.what();
@@ -1015,32 +1061,36 @@ void Novatel::StopReading() {
 }
 
 void Novatel::ReadSerialPort() {
-	unsigned char buffer[MAX_NOUT_SIZE];
-	size_t len;
-	log_info_("Started read thread.");
+  unsigned char buffer[MAX_NOUT_SIZE*50];
+  size_t len = 0;
+  log_info_("Started read thread.");
 
-	// continuously read data from serial port
-	while (reading_status_) {
-		try {
-			// read data
-			len = serial_port_->read(buffer, MAX_NOUT_SIZE);
-		} catch (std::exception &e) {
-	        std::stringstream output;
-	        output << "Error reading from serial port: " << e.what();
-	        log_error_(output.str());
-	        //return;
-    	}
-		// timestamp the read
-		if (time_handler_) 
-			read_timestamp_ = time_handler_();
-		else 
-			read_timestamp_ = 0;
+  // continuously read data from serial port
+  while (reading_status_) {
+    try {
+      // read data
+      len = serial_port_->read(buffer, MAX_NOUT_SIZE*50);
 
-		//std::cout << read_timestamp_ <<  "  bytes: " << len << std::endl;
-		// add data to the buffer to be parsed
-		BufferIncomingData(buffer, len);
-	}
-	
+      if (raw_log.is_open())
+        raw_log.write((char *)buffer, len);
+
+      // timestamp the read
+      if (time_handler_) 
+        read_timestamp_ = time_handler_();
+      else 
+        read_timestamp_ = 0;
+
+      //std::cout << read_timestamp_ <<  "  bytes: " << len << std::endl;
+      // add data to the buffer to be parsed
+      BufferIncomingData(buffer, len);
+    } catch (std::exception &e) {
+        std::stringstream output;
+        output << "Error reading from serial port: " << e.what();
+        log_error_(output.str());
+        len = 0;
+        //return;
+      }
+  }
 }
 
 void Novatel::ReadFromFile(unsigned char* buffer, unsigned int length)
@@ -1050,113 +1100,116 @@ void Novatel::ReadFromFile(unsigned char* buffer, unsigned int length)
 
 void Novatel::BufferIncomingData(unsigned char *message, unsigned int length)
 {
+  try {
+    // add incoming data to buffer
+    for (unsigned int ii=0; ii<length; ii++) {
+      // make sure bufIndex is not larger than buffer
+      if (buffer_index_ >= MAX_NOUT_SIZE) {
+        buffer_index_=0;
+        log_warning_("Overflowed receive buffer. Buffer cleared.");
+        exit(1);
+      }
 
-	// add incoming data to buffer
-	for (unsigned int ii=0; ii<length; ii++) {
-		// make sure bufIndex is not larger than buffer
-		if (buffer_index_ >= MAX_NOUT_SIZE) {
-			buffer_index_=0;
-            log_warning_("Overflowed receive buffer. Buffer cleared.");
-		}
+      if (buffer_index_ == 0) {	// looking for beginning of message
+              if (message[ii] == NOVATEL_SYNC_BYTE_1) {	// beginning of msg found - add to buffer
+          data_buffer_[buffer_index_++] = message[ii];
+          bytes_remaining_ = 0;
+              } else if (message[ii] == NOVATEL_ACK_BYTE_1) {
+          // received beginning of acknowledgement
+          reading_acknowledgement_ = true;
+          buffer_index_ = 1;
+              } else if ((message[ii] == NOVATEL_RESET_BYTE_1) && waiting_for_reset_complete_) {
+                  // received {COM#} acknowledging receiver reset complete
+                  reading_reset_complete_ = true;
+                  buffer_index_ = 1;
+        } else {
+          //log_debug_("BufferIncomingData::Received unknown data.");
+        }
+      } else if (buffer_index_ == 1) {	// verify 2nd character of header
+              if (message[ii] == NOVATEL_SYNC_BYTE_2) {	// 2nd byte ok - add to buffer
+          data_buffer_[buffer_index_++] = message[ii];
+              } else if ( (message[ii] == NOVATEL_ACK_BYTE_2) && reading_acknowledgement_ ) {
+          // 2nd byte of acknowledgement
+          buffer_index_ = 2;
+              } else if ((message[ii] == NOVATEL_RESET_BYTE_2) && reading_reset_complete_) {
+                  // 2nd byte of receiver reset complete message
+                  buffer_index_ = 2;
+        } else {
+          // start looking for new message again
+          buffer_index_ = 0;
+          bytes_remaining_=0;
+          reading_acknowledgement_=false;
+                  reading_reset_complete_=false;
+        } // end if (msg[i]==0x44)
+      } else if (buffer_index_ == 2) {	// verify 3rd character of header
+              if (message[ii] == NOVATEL_SYNC_BYTE_3) {	// 2nd byte ok - add to buffer
+          data_buffer_[buffer_index_++] = message[ii];
+              } else if ( (message[ii] == NOVATEL_ACK_BYTE_3) && (reading_acknowledgement_) ) {
+                  log_info_("RECEIVED AN ACK.");
+          // final byte of acknowledgement received
+          buffer_index_ = 0;
+          reading_acknowledgement_ = false;
+          boost::lock_guard<boost::mutex> lock(ack_mutex_);
+          ack_received_ = true;
+          ack_condition_.notify_all();
 
-		if (buffer_index_ == 0) {	// looking for beginning of message
-            if (message[ii] == NOVATEL_SYNC_BYTE_1) {	// beginning of msg found - add to buffer
-				data_buffer_[buffer_index_++] = message[ii];
-				bytes_remaining_ = 0;
-            } else if (message[ii] == NOVATEL_ACK_BYTE_1) {
-				// received beginning of acknowledgement
-				reading_acknowledgement_ = true;
-				buffer_index_ = 1;
-            } else if ((message[ii] == NOVATEL_RESET_BYTE_1) && waiting_for_reset_complete_) {
-                // received {COM#} acknowledging receiver reset complete
-                reading_reset_complete_ = true;
-                buffer_index_ = 1;
-			} else {
-        //log_debug_("BufferIncomingData::Received unknown data.");
-			}
-		} else if (buffer_index_ == 1) {	// verify 2nd character of header
-            if (message[ii] == NOVATEL_SYNC_BYTE_2) {	// 2nd byte ok - add to buffer
-				data_buffer_[buffer_index_++] = message[ii];
-            } else if ( (message[ii] == NOVATEL_ACK_BYTE_2) && reading_acknowledgement_ ) {
-				// 2nd byte of acknowledgement
-				buffer_index_ = 2;
-            } else if ((message[ii] == NOVATEL_RESET_BYTE_2) && reading_reset_complete_) {
-                // 2nd byte of receiver reset complete message
-                buffer_index_ = 2;
-			} else {
-				// start looking for new message again
-				buffer_index_ = 0;
-				bytes_remaining_=0;
-				reading_acknowledgement_=false;
-                reading_reset_complete_=false;
-			} // end if (msg[i]==0x44)
-		} else if (buffer_index_ == 2) {	// verify 3rd character of header
-            if (message[ii] == NOVATEL_SYNC_BYTE_3) {	// 2nd byte ok - add to buffer
-				data_buffer_[buffer_index_++] = message[ii];
-            } else if ( (message[ii] == NOVATEL_ACK_BYTE_3) && (reading_acknowledgement_) ) {
-                log_info_("RECEIVED AN ACK.");
-				// final byte of acknowledgement received
-				buffer_index_ = 0;
-				reading_acknowledgement_ = false;
-				boost::lock_guard<boost::mutex> lock(ack_mutex_);
-				ack_received_ = true;
-				ack_condition_.notify_all();
+          // ACK received
+          handle_acknowledgement_();
+              } else if ((message[ii] == NOVATEL_RESET_BYTE_3) && reading_reset_complete_) {
+                  // 3rd byte of receiver reset complete message
+                  buffer_index_ = 3;
+        } else {
+          // start looking for new message again
+          buffer_index_ = 0;
+          bytes_remaining_ = 0;
+          reading_acknowledgement_ = false;
+                  reading_reset_complete_ = false;
+        } // end if (msg[i]==0x12)
+      } else if (buffer_index_ == 3) {	// number of bytes in header - not including sync
+              if((message[ii] == NOVATEL_RESET_BYTE_4) && (message[ii+2] == NOVATEL_RESET_BYTE_6)
+                      && reading_reset_complete_ && waiting_for_reset_complete_) {
+                  // 4th byte of receiver reset complete message
+    //                log_info_("RECEIVER RESET COMPLETE RECEIVED.");
+                  buffer_index_ = 0;
+                  reading_reset_complete_ = false;
+                  boost::lock_guard<boost::mutex> lock(reset_mutex_);
+                  waiting_for_reset_complete_ = false;
+                  reset_condition_.notify_all();
 
-				// ACK received
-				handle_acknowledgement_();
-            } else if ((message[ii] == NOVATEL_RESET_BYTE_3) && reading_reset_complete_) {
-                // 3rd byte of receiver reset complete message
-                buffer_index_ = 3;
-			} else {
-				// start looking for new message again
-				buffer_index_ = 0;
-				bytes_remaining_ = 0;
-				reading_acknowledgement_ = false;
-                reading_reset_complete_ = false;
-			} // end if (msg[i]==0x12)
-		} else if (buffer_index_ == 3) {	// number of bytes in header - not including sync
-            if((message[ii] == NOVATEL_RESET_BYTE_4) && (message[ii+2] == NOVATEL_RESET_BYTE_6)
-                    && reading_reset_complete_ && waiting_for_reset_complete_) {
-                // 4th byte of receiver reset complete message
-//                log_info_("RECEIVER RESET COMPLETE RECEIVED.");
-                buffer_index_ = 0;
-                reading_reset_complete_ = false;
-                boost::lock_guard<boost::mutex> lock(reset_mutex_);
-                waiting_for_reset_complete_ = false;
-                reset_condition_.notify_all();
-
-            } else {
-                reading_reset_complete_ = false;
-                data_buffer_[buffer_index_++] = message[ii];
-                // length of header is in byte 4
-                header_length_ = message[ii];
-            }
-		} else if (buffer_index_ == 5) { // get message id
-			data_buffer_[buffer_index_++] = message[ii];
-			bytes_remaining_--;
-			message_id_ = BINARY_LOG_TYPE( ((data_buffer_[buffer_index_-1]) << 8) + data_buffer_[buffer_index_-2] );
-		// } else if (buffer_index_ == 8) {	// set number of bytes
-		// 	data_buffer_[buffer_index_++] = message[ii];
-		// 	// length of message is in byte 8
-		// 	// bytes remaining = remainder of header  + 4 byte checksum + length of body
-		// 	// TODO: added a -2 to make things work right, figure out why i need this
-		// 	bytes_remaining_ = message[ii] + 4 + (header_length_-7) - 2;
-		} else if (buffer_index_ == 9) {
-			data_buffer_[buffer_index_++] = message[ii];
-			bytes_remaining_ = (header_length_ - 10) + 4 + (data_buffer_[9] << 8) + data_buffer_[8];
-		} else if (bytes_remaining_ == 1) {	// add last byte and parse
-			data_buffer_[buffer_index_++] = message[ii];
-			// BINARY_LOG_TYPE message_id = (BINARY_LOG_TYPE) (((data_buffer_[5]) << 8) + data_buffer_[4]);
-			// log_info_("Sending to ParseBinary");
-			ParseBinary(data_buffer_, buffer_index_, message_id_);
-			// reset counters
-			buffer_index_ = 0;
-			bytes_remaining_ = 0;
-		} else {	// add data to buffer
-			data_buffer_[buffer_index_++] = message[ii];
-			bytes_remaining_--;
-		}
-	}	// end for
+              } else {
+                  reading_reset_complete_ = false;
+                  data_buffer_[buffer_index_++] = message[ii];
+                  // length of header is in byte 4
+                  header_length_ = message[ii];
+              }
+      } else if (buffer_index_ == 5) { // get message id
+        data_buffer_[buffer_index_++] = message[ii];
+        bytes_remaining_--;
+        message_id_ = BINARY_LOG_TYPE( ((data_buffer_[buffer_index_-1]) << 8) + data_buffer_[buffer_index_-2] );
+      // } else if (buffer_index_ == 8) {	// set number of bytes
+      // 	data_buffer_[buffer_index_++] = message[ii];
+      // 	// length of message is in byte 8
+      // 	// bytes remaining = remainder of header  + 4 byte checksum + length of body
+      // 	// TODO: added a -2 to make things work right, figure out why i need this
+      // 	bytes_remaining_ = message[ii] + 4 + (header_length_-7) - 2;
+      } else if (buffer_index_ == 9) {
+        data_buffer_[buffer_index_++] = message[ii];
+        bytes_remaining_ = (header_length_ - 10) + 4 + (data_buffer_[9] << 8) + data_buffer_[8];
+      } else if (bytes_remaining_ == 1) {	// add last byte and parse
+        data_buffer_[buffer_index_++] = message[ii];
+        // BINARY_LOG_TYPE message_id = (BINARY_LOG_TYPE) (((data_buffer_[5]) << 8) + data_buffer_[4]);
+        // log_info_("Sending to ParseBinary");
+        ParseBinary(data_buffer_, buffer_index_, message_id_);
+        // reset counters
+        buffer_index_ = 0;
+        bytes_remaining_ = 0;
+      } else {	// add data to buffer
+        data_buffer_[buffer_index_++] = message[ii];
+        bytes_remaining_--;
+      }
+    }	// end for
+  } catch (std::exception &e) {
+  }
 }
 
 void Novatel::ParseBinary(unsigned char *message, size_t length, BINARY_LOG_TYPE message_id) {
@@ -1202,7 +1255,7 @@ void Novatel::ParseBinary(unsigned char *message, size_t length, BINARY_LOG_TYPE
             PositionEcef best_xyz;
             memcpy(&best_xyz, message, sizeof(best_xyz));
             if (best_position_ecef_callback_)
-            	best_position_ecef_callback_(best_xyz, read_timestamp_);
+              best_position_ecef_callback_(best_xyz, read_timestamp_);
             break;
         case INSPVA_LOG_TYPE:
             InsPositionVelocityAttitude ins_pva;
@@ -1253,26 +1306,32 @@ void Novatel::ParseBinary(unsigned char *message, size_t length, BINARY_LOG_TYPE
             	ins_covariance_short_callback_(ins_cov_s, read_timestamp_);
             break;
         case PSRDOPB_LOG_TYPE:
+        {
             Dop psr_dop;
             header_length = (uint16_t) *(message+3);
-            payload_length = (((uint16_t) *(message+9)) << 8) +
+            payload_length = (((uint16_t) *(message+9)) << 8) +\
                              ((uint16_t) *(message+8));
+            size_t unrep_block = sizeof(psr_dop) -\
+              sizeof(psr_dop.prn) - sizeof(psr_dop.crc);
 
             // Copy header and unrepeated fields
-            memcpy(&psr_dop, message, header_length+24);
+            memcpy(&psr_dop, message, unrep_block);
             //Copy repeated fields
-            memcpy(&psr_dop.prn, message+header_length+28, (4*psr_dop.number_of_prns));
+            memcpy(&psr_dop.prn, message+unrep_block,
+              sizeof(psr_dop.prn[0]) * psr_dop.number_of_prns);
             //Copy CRC
-            memcpy(&psr_dop.crc, message+header_length+payload_length, 4);
+            memcpy(&psr_dop.crc, message+header_length+payload_length,
+              4);
 
             if (pseudorange_dop_callback_)
-            	pseudorange_dop_callback_(psr_dop, read_timestamp_);
+              pseudorange_dop_callback_(psr_dop, read_timestamp_);
             break;
+        }
         case RTKDOPB_LOG_TYPE:
             Dop rtk_dop;
             memcpy(&rtk_dop, message, sizeof(rtk_dop));
             if (rtk_dop_callback_)
-            	rtk_dop_callback_(rtk_dop, read_timestamp_);
+              rtk_dop_callback_(rtk_dop, read_timestamp_);
             break;
         case BSLNXYZ_LOG_TYPE:
             BaselineEcef baseline_xyz;
@@ -1369,7 +1428,7 @@ void Novatel::ParseBinary(unsigned char *message, size_t length, BINARY_LOG_TYPE
                     rng.number_of_observations = cmp_ranges.number_of_observations;
                     memcpy(rng.crc, cmp_ranges.crc, 4);
 
-                    for (size_t kk = 0; kk < cmp_ranges.number_of_observations; ++kk)
+                    for (int kk = 0; kk < cmp_ranges.number_of_observations; ++kk)
                     {
                       UnpackCompressedRangeData(cmp_ranges.range_data[kk],
                                                 rng.range_data[kk]);
@@ -1439,7 +1498,7 @@ void Novatel::ParseBinary(unsigned char *message, size_t length, BINARY_LOG_TYPE
             // Copy Repeated portion of message block)
             memcpy(&almanac.data, message+header_length+4, (112*almanac.number_of_prns));
             // Copy the CRC
-            memcpy(&raw_almanac.crc, message+header_length+payload_length, 4);
+            memcpy(&almanac.crc, message+header_length+payload_length, 4);
 
             /*
             //TODO: Test crc calculation, see if need to flip byte order
@@ -1521,6 +1580,30 @@ void Novatel::ParseBinary(unsigned char *message, size_t length, BINARY_LOG_TYPE
             memcpy(&rtk_pos, message, sizeof(rtk_pos));
             if (rtk_position_callback_)
             	rtk_position_callback_(rtk_pos, read_timestamp_);
+            break;
+        case RAWGPSWORD_LOG_TYPE:
+            RawGpsWord gps_word;
+            memcpy(&gps_word, message, sizeof(gps_word));
+            if (raw_gps_word_callback_)
+            	raw_gps_word_callback_(gps_word, read_timestamp_);
+            break;
+        case BESTSATS_LOG_TYPE:
+            BestSats best_sats;
+            header_length = (uint16_t) *(message+3);
+            payload_length = (((uint16_t) *(message+9)) << 8) +\
+              ((uint16_t) *(message+8));
+
+            //Copy header and unrepeated message block
+            memcpy(&best_sats.header, message, header_length+4);
+            // Copy Repeated portion of message block)
+            memcpy(&best_sats.sats, message+header_length+4,
+              (sizeof(best_sats.sats[0])*best_sats.entries));
+            // Copy the CRC
+            memcpy(&raw_almanac.crc,
+              message+header_length+payload_length, 4);
+
+            if (best_sats_callback_)
+              best_sats_callback_(best_sats, read_timestamp_);
             break;
         default:
             break;
